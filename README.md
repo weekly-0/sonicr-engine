@@ -1,3 +1,5 @@
+Original repo: https://github.com/jnmartin84/sonic-r
+
 # Sonic R
 
 Here you will find a reimplementation of *Sonic R* (the 1998 Sega PC release),
