@@ -180,22 +180,12 @@ running the **same build and the same game data**.
   the local network via broadcast — no IP needed.
 - **Direct connect:** a client can join a specific host with `--host <ip>`,
   useful across networks or when broadcast is blocked.
-- **Matchmaker:** an internet matchmaking service lets players find each other
-  online without exchanging IPs. Set your name with `--username <name>`.
+
+Set your name with `--username <name>`.
 
 **Cross-play with Dreamcast.** A Dreamcast speaks the identical protocol, so you
 can share a session with Dreamcast players in any combination, as long as everyone
 is on the same version and data.
-
-### Signing in and out
-
-Signing in to the matchmaker saves a small token — a file named `ONLINE.DAT` in
-your data directory (your credential plus your username) — so you stay signed in
-on later launches. To **sign out**, or if the matchmaker misbehaves (a stale
-token, the wrong name, a sign-in that won't take), delete `ONLINE.DAT` and sign in
-again. The next successful sign-in writes a fresh token.
-
----
 
 ## Save data
 
@@ -208,11 +198,9 @@ Everything the game saves lives in your data directory:
 | Gamepad configuration | `JOYSTICK.INF` / `SAVE/PADS.CFG` |
 | Keyboard bindings     | `KEYS.BIN`                       |
 | Time Attack ghosts    | `GHOST/`                         |
-| Matchmaker sign-in    | `ONLINE.DAT`                     |
 
 To reset progress, delete `SONICR.SAV`. To reset controls, delete the keyboard
-(`KEYS.BIN`) or gamepad (`JOYSTICK.INF`) bindings and reconfigure in Options. To
-sign out of the matchmaker, delete `ONLINE.DAT`.
+(`KEYS.BIN`) or gamepad (`JOYSTICK.INF`) bindings and reconfigure in Options.
 
 ---
 
@@ -227,7 +215,6 @@ sign out of the matchmaker, delete `ONLINE.DAT`.
 | Gamepad not detected                  | Check the pad works in another SDL game.                 |
 | Controls feel wrong                   | Reset them in Options, or delete `KEYS.BIN` / `JOYSTICK.INF`. |
 | Can't find a LAN game                 | Use `--host <ip>` to connect directly.                   |
-| Matchmaker won't sign in / wrong name | Delete `ONLINE.DAT` and retry.                           |
 
 ---
 
@@ -236,20 +223,18 @@ sign out of the matchmaker, delete `ONLINE.DAT`.
 Only needed on macOS/Linux, or to modify the game. (On Windows, just grab the
 prebuilt `SONICR.EXE` from [Releases](https://github.com/jnmartin84/sonic-r/releases).)
 
-**Dependencies:** a C compiler, `make`, and the **SDL2**, **SDL2_mixer**, and
-**miniupnpc** development libraries. OpenGL is used for rendering — it's a system
-framework on macOS and Windows, and needs the Mesa dev package on Linux. (BearSSL,
-used by the online matchmaker for HTTPS, is bundled in this repo — nothing to
-install.)
+**Dependencies:** a C compiler, `make`, and the **SDL2** and **SDL2_mixer**
+development libraries. OpenGL is used for rendering — it's a system framework
+on macOS and Windows, and needs the Mesa dev package on Linux.
 
-- **macOS:** `brew install sdl2 sdl2_mixer miniupnpc`
-- **Linux (Debian/Ubuntu):** `sudo apt install build-essential libsdl2-dev libsdl2-mixer-dev libminiupnpc-dev libgl1-mesa-dev`
+- **macOS:** `brew install sdl2 sdl2_mixer`
+- **Linux (Debian/Ubuntu):** `sudo apt install build-essential libsdl2-dev libsdl2-mixer-dev libgl1-mesa-dev`
 - **Windows:** [MSYS2](https://www.msys2.org/), UCRT64 shell. The Windows build
   links **statically**, so SDL2_mixer's audio-codec libraries must be installed
   too (they're what SDL2_mixer is linked against, not optional here):
 
   ```sh
-  pacman -S make mingw-w64-ucrt-x86_64-{gcc,SDL2,SDL2_mixer,miniupnpc,opusfile,opus,libogg,libvorbis,flac,mpg123,libxmp,wavpack}
+  pacman -S make mingw-w64-ucrt-x86_64-{gcc,SDL2,SDL2_mixer,opusfile,opus,libogg,libvorbis,flac,mpg123,libxmp,wavpack}
   ```
 
   The remaining Windows system libraries the static link needs (`opengl32`,

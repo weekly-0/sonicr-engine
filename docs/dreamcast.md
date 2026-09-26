@@ -118,7 +118,7 @@ In menus, **A** or **Start** confirms and **B** / **X** backs out.
 ### Network lobby (no keyboard needed)
 
 The network screens were built for a keyboard and still show their original
-**function-key prompts** on screen — `F1`, `F2`, `F3`, `F5`, `F6`, `F7`, `F8`. You
+**function-key prompts** on screen — `F1`, `F2`, `F5`, `F6`, `F7`, `F8`. You
 do **not** need a keyboard: a standard controller drives every one of them. Match
 the on-screen prompt to the button below.
 
@@ -126,7 +126,6 @@ the on-screen prompt to the button below.
 |------------------|----------------------------------|--------------------|
 | `F1`             | Host a game / start the race     | **A** or **Start** |
 | `F2`             | Join a game                      | **R** trigger      |
-| `F3`             | Skip sign-in / LAN-only play     | **Y**              |
 | `F6`             | Change character                 | **D-pad ← / →**    |
 | `F7`             | Change game mode                 | **L** trigger      |
 | `F8`             | Change track                     | **D-pad ↑ / ↓**    |
@@ -156,25 +155,13 @@ The entire network lobby — host, join, and character / track / mode selection 
 driven by the controller, so no keyboard is needed (see
 [Network lobby](#network-lobby-no-keyboard-needed)).
 
-**The matchmaker is the recommended way to play online.** It lets you find
-internet games without swapping IPs — and signing in gives you your own username.
-Skip sign-in (or play LAN-only) and you simply appear to others as **"Dreamcast"**.
+LAN discovery finds hosts on the local network. Dreamcast players appear as
+**"Dreamcast"** to other players.
 
 **Full cross-play with desktop.** A Dreamcast speaks the identical protocol, so it
 plays with PC / Mac / Linux players in any combination — a Dreamcast hosting a
 desktop client, a desktop hosting a Dreamcast client, or Dreamcast-to-Dreamcast —
 as long as everyone is on the same version and data.
-
-### Signing in and out
-
-Signing in to the matchmaker saves a small token (your credential plus your
-username) as a VMU save named `SONICR_NET`, so you stay signed in on later
-launches. To **sign out**, or if the matchmaker misbehaves (a stale token, the
-wrong name, a sign-in that won't take), delete `SONICR_NET` from the VMU using the
-Dreamcast BIOS file manager (boot with no disc in the drive). The next successful
-sign-in writes a fresh token.
-
----
 
 ## Save data
 
@@ -188,11 +175,9 @@ Dreamcast BIOS file manager (boot with no disc in the drive).
 | Gamepad configuration | `SONICR_PAD`  |
 | Keyboard bindings     | `SONICR_KEY`  |
 | Time Attack ghosts    | `SONICR_GHO`  |
-| Matchmaker sign-in    | `SONICR_NET`  |
 
 To reset progress, delete `SONICR_SAVE`. To reset controls, delete `SONICR_PAD`
-(gamepad) or `SONICR_KEY` (keyboard). To sign out of the matchmaker, delete
-`SONICR_NET`.
+(gamepad) or `SONICR_KEY` (keyboard).
 
 ---
 
@@ -204,7 +189,6 @@ To reset progress, delete `SONICR_SAVE`. To reset controls, delete `SONICR_PAD`
 | Crash right after the logos           | Incomplete data set — make sure all folders are present.   |
 | No music                              | Add a `MUSIC` folder with your tracks (WAV for Colab).     |
 | Controls feel wrong                   | Reset in Options, or delete `SONICR_PAD` / `SONICR_KEY` from the VMU. |
-| Matchmaker won't sign in / wrong name | Delete `SONICR_NET` from the VMU and retry.                |
 | No network                            | Confirm the BBA / W5500 adapter is seated and detected.    |
 
 ---

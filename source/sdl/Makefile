@@ -61,25 +61,6 @@ else
   SDL_LIBS = $(shell sdl2-config --libs) -lSDL2_mixer
 endif
 
-# Matchmaker — always enabled (BearSSL for HTTPS + miniupnpc for UPnP).
-# BearSSL is compiled from source (sdl/src/net/bearssl/), no external dep.
-ifneq ($(IS_MINGW),)
-  MATCHMAKER_CFLAGS = -DSONICR_MATCHMAKER -DMINIUPNP_STATICLIB
-  MATCHMAKER_LIBS   = -lminiupnpc -lws2_32 -liphlpapi
-else
-  # miniupnpc lives outside the default compiler search path on macOS
-  # (Homebrew) and on many Linux distros, so ask pkg-config for the real
-  # -I/-L flags. Fall back to a bare -lminiupnpc if pkg-config can't see it.
-  MINIUPNPC_PC := $(shell pkg-config --exists miniupnpc && echo yes)
-  ifeq ($(MINIUPNPC_PC),yes)
-    MATCHMAKER_CFLAGS = -DSONICR_MATCHMAKER $(shell pkg-config --cflags miniupnpc)
-    MATCHMAKER_LIBS   = $(shell pkg-config --libs miniupnpc)
-  else
-    MATCHMAKER_CFLAGS = -DSONICR_MATCHMAKER
-    MATCHMAKER_LIBS   = -lminiupnpc
-  endif
-endif
-
 # Single-precision build: route sr_double → float. The actual DC build pairs
 # this with `-m4-single-only` (sh-elf-gcc), which constrains code generation
 # to single precision regardless of literal types. Host FLOAT32=1 builds are
@@ -111,8 +92,8 @@ CFLAGS = -I$(SRCDIR) -std=c11 -Os -g -Wall -Wextra -Werror \
          -Werror=pointer-to-int-cast -Werror=int-to-pointer-cast \
          -DSONICR_SDL -DSONICR_DEBUG_LOG \
          $(PLATFORM_CFLAGS) $(GL_CFLAGS) \
-         $(SDL_CFLAGS) $(MATCHMAKER_CFLAGS) $(FLOAT32_CFLAGS) $(SOFT_CFLAGS)
-LDFLAGS = $(SANITIZE) $(GL_LIBS) -lm $(SDL_LIBS) $(MATCHMAKER_LIBS) $(EXTRA_LDFLAGS)
+         $(SDL_CFLAGS) $(FLOAT32_CFLAGS) $(SOFT_CFLAGS)
+LDFLAGS = $(SANITIZE) $(GL_LIBS) -lm $(SDL_LIBS) $(EXTRA_LDFLAGS)
 
 # Object files
 COBJS = $(patsubst $(SRCDIR)/%.c, $(BUILDDIR)/%.o, $(CSRC))
@@ -129,8 +110,8 @@ RELEASE_CFLAGS = -I$(SRCDIR) -std=c11 -Os -g -Wall -Wextra \
                  -Wno-void-pointer-to-int-cast -Wno-int-to-void-pointer-cast \
                  -DSONICR_SDL \
                          $(PLATFORM_CFLAGS) $(GL_CFLAGS) \
-                 $(SDL_CFLAGS) $(MATCHMAKER_CFLAGS) $(FLOAT32_CFLAGS) $(SOFT_CFLAGS)
-RELEASE_LDFLAGS = $(GL_LIBS) -lm $(SDL_LIBS) $(MATCHMAKER_LIBS) $(EXTRA_LDFLAGS)
+                 $(SDL_CFLAGS) $(FLOAT32_CFLAGS) $(SOFT_CFLAGS)
+RELEASE_LDFLAGS = $(GL_LIBS) -lm $(SDL_LIBS) $(EXTRA_LDFLAGS)
 RELEASE_OBJS = $(patsubst $(SRCDIR)/%.c, $(RELEASE_BUILDDIR)/%.o, $(CSRC))
 RELEASE_TARGET = $(RELEASE_BUILDDIR)/sonicr
 

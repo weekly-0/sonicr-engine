@@ -73,7 +73,7 @@ CFLAGS = -I$(DC_SRCDIR) -I$(SDL_SRCDIR) \
          -Wno-array-bounds -Wno-attribute-warning -Wno-maybe-uninitialized \
          -Wno-type-limits -Wno-stringop-overflow -Wno-unused-but-set-variable \
          -Wno-implicit-fallthrough -Wno-pointer-sign -Wno-stringop-truncation \
-         -DSONICR_SDL -DSONICR_DC -DSONICR_FLOAT32 -DSONICR_MATCHMAKER -DBLURRY \
+         -DSONICR_SDL -DSONICR_DC -DSONICR_FLOAT32 -DBLURRY \
          -DDATA_DIR='"/cd"' $(DEBUG_LOG_CFLAGS)
 
 # -DSONICR_DC_240P
@@ -121,13 +121,12 @@ clean:
 # identity survives. Verified with a deliberately-dead probe function: without
 # -fno-lto it is not reported, with it, it is.
 #
-# Output is filtered to our own translation units; unreachable newlib/KOS/BearSSL
+# Output is filtered to our own translation units; unreachable newlib/KOS
 # sections are expected and uninteresting. Exits nonzero if anything is found.
 audit-dead: $(OBJS) | $(BUILDDIR)
 	@kos-cc -fno-lto -o $(BUILDDIR)/audit.elf $(OBJS) $(LDFLAGS) \
 	     -Wl,--gc-sections -Wl,--print-gc-sections 2>&1 \
 	  | grep -E "in file .*build/(sdl|dc)/" \
-	  | grep -v "bearssl" \
 	  | sed -E "s|.*section [']([^']*)['] in file [']([^']*)['].*|\2  \1|" \
 	  | grep "[.]text[.]" | sed "s|[.]text[.]||" \
 	  | sort -k2 > $(BUILDDIR)/dead.txt; \

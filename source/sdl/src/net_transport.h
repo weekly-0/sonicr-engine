@@ -19,6 +19,19 @@
 #define NET_PORT_DEFAULT    7847
 #define NET_MAX_PLAYERS     4
 #define NET_MAX_PACKET      512    /* delta keyframe: 12 + 4*96 = 396 max */
+#define NET_NAME_MAX        33
+
+#ifdef SONICR_DC
+#define NET_PLATFORM_NAME   "dreamcast"
+#elif defined(_WIN32)
+#define NET_PLATFORM_NAME   "windows"
+#elif defined(__linux__)
+#define NET_PLATFORM_NAME   "linux"
+#elif defined(__APPLE__)
+#define NET_PLATFORM_NAME   "macos"
+#else
+#define NET_PLATFORM_NAME   "unknown"
+#endif
 
 /* Discovery protocol */
 #define NET_DISCOVER_MAGIC  0x534F4E52   /* "SONR" */

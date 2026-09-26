@@ -14,11 +14,8 @@
 #include "player_struct.h"
 #include "r_types.h"
 #include "r_state.h"
-#include "net/matchmaker.h"
-#include "qrcodegen.h"
 #include "net_transport.h"
 #include "r_draw.h"
-#include <stdarg.h>
 
 void SoftwareRenderSortedPolygons(void);
 void FlipSoftware(void);
@@ -4330,42 +4327,6 @@ extern int g_screenFPS;                 /* 0x6E9CDC */
 
 static void DrawPixText(const char *s, int x, int y, int pixSz, uint32_t color);
 
-/* On-screen matchmaker debug overlay */
-#define NET_DBG_LINES 6
-#define NET_DBG_LEN 64
-static char s_netDbg[NET_DBG_LINES][NET_DBG_LEN];
-static int s_netDbgCount = 0;
-
-static void NetDbgPush(const char *fmt, ...)
-{
-    if (s_netDbgCount < NET_DBG_LINES) {
-        va_list ap;
-        va_start(ap, fmt);
-        vsnprintf(s_netDbg[s_netDbgCount], NET_DBG_LEN, fmt, ap);
-        va_end(ap);
-        s_netDbgCount++;
-    }
-    else {
-        for (int i = 0; i < NET_DBG_LINES - 1; i++) {
-            memcpy(s_netDbg[i], s_netDbg[i + 1], NET_DBG_LEN);
-        }
-        va_list ap;
-        va_start(ap, fmt);
-        vsnprintf(s_netDbg[NET_DBG_LINES - 1], NET_DBG_LEN, fmt, ap);
-        va_end(ap);
-    }
-}
-
-static void NetDbgClear(void)
-{
-    s_netDbgCount = 0;
-}
-
-static void NetDbgDraw(void)
-{
-    (void)s_netDbgCount;
-}
-
 /* Wall-clock second of the client's last CHAR_CHANGE broadcast; the lobby
  * repeats the pick once a second because the packet is unacknowledged. */
 static unsigned int s_charResendSec;
@@ -4539,7 +4500,7 @@ static void BuildSoundIndexList(void)                       /* 0x48A5C8 */
 }
 
 /* Shared 5×7 pixel font
- * Used by both RenderSignInScreen and the NetworkScreen state-0 prompt.
+ * Used by the NetworkScreen prompts.
  * Letters: 'a-z' and 'A-Z' both map to the same uppercase glyphs (idx 0-25).
  * Digits '0'-'9' → idx 26-35.  '.' → idx 36.  '/' → idx 37. */
 static const uint8_t s_pixFont[40][7] = {
@@ -4597,52 +4558,6 @@ static int PixFontIndex(char c)
     return -1;
 }
 
-/* Matchmaker session picker (state 3) state — file-scope so both the
- * state-machine block and the render block can read/write them. */
-static int s_pickerCursor = 0;
-static int s_pickerRefreshFrame = 0;
-static unsigned char s_pickerLastInput = 0xFF;
-static int s_pickerPrevState = -1;
-
-/* Convert a C string to the in-game-font glyph-ID array.
- * Mapping: a-z/A-Z → 0..25, 0-9 → 26..35.  Other chars are skipped.
- * Writes a -1 sentinel after the last glyph.  Returns glyph count. */
-static int StringToGlyphIds(const char *s, int *out, int maxOut)
-{
-    int n = 0;
-    for (int i = 0; s[i] && n < maxOut - 1; i++) {
-        char c = s[i];
-        if (c >= 'a' && c <= 'z')      out[n++] = c - 'a';
-        else if (c >= 'A' && c <= 'Z') out[n++] = c - 'A';
-        else if (c >= '0' && c <= '9') out[n++] = 26 + (c - '0');
-    }
-    out[n] = -1;
-    return n;
-}
-
-/* Mirror of DrawGlyphString's per-glyph advance, without drawing.
- * Returns the pixel width the glyph string would occupy. */
-static int MeasureGlyphString(const int *glyphIds, int maxCount)
-{
-    int x = 0;
-    for (int i = 0; i < maxCount; i++) {
-        int id = glyphIds[i];
-        if (id == -1) break;
-        int lowId = id & 0xFFFF;
-        int uvW;
-        if ((id & 0xFFFF0000) != 0) {
-            int *mapEntry = (int *)((char *)g_romCharMap + lowId * 12);
-            if (mapEntry[0] == -1) continue;
-            uvW = mapEntry[2];
-        } else {
-            int *glyphEntry = (int *)((char *)g_romGlyphTable + lowId * 16);
-            uvW = glyphEntry[2];
-        }
-        x += uvW * 2;
-    }
-    return x;
-}
-
 static void DrawPixText(const char *s, int x, int y, int pixSz, uint32_t color)
 {
     int charW = 5 * pixSz + pixSz;
@@ -4682,151 +4597,6 @@ static int PixTextWidth(const char *s, int pixSz)
     return len * charW;
 }
 
-/* ─ Sign-in QR rendering helper ─ */
-static void RenderSignInScreen(const uint8_t *qrBuf, int qrSize,
-                               const char *code, int authState)
-{
-    int moduleSize = 4;
-    int qrPixels = qrSize * moduleSize;
-    int originX = (640 - qrPixels) / 2;
-    int originY = (480 - qrPixels) / 2;
-
-    int pad = moduleSize * 2;
-    float z = 0.01f;
-
-    R_DrawQuad2DSolid(originX - pad, originY - pad,
-                      originX + qrPixels + pad, originY + qrPixels + pad,
-                      z, 0xFFFFFFFF);
-
-    for (int y = 0; y < qrSize; y++) {
-        for (int x = 0; x < qrSize; x++) {
-            if (qrcodegen_getModule(qrBuf, x, y)) {
-                R_DrawQuad2DSolid(originX + x * moduleSize,
-                                  originY + y * moduleSize,
-                                  originX + (x + 1) * moduleSize,
-                                  originY + (y + 1) * moduleSize,
-                                  z, 0xFF000000);
-            }
-        }
-    }
-
-    /*  Sign-in URL above the QR 
-     * QR encodes "https://signin.realityjump.co.uk/<code>", but for
-     * human use we drop the protocol — phone keyboards/browsers fill
-     * it in. URL pixSz shrinks to pixSz=2 if the line would overflow
-     * 640 (max-length code case). */
-    if (code && code[0]) {
-        char url[MM_MAX_CODE + 32];
-        snprintf(url, sizeof(url), "SIGNIN.SONICR.ONLINE/%s", code);
-        /* Uppercase the code portion so it renders cleanly through the
-         * uppercase-only pixel font. */
-        for (int i = 0; url[i]; i++) {
-            if (url[i] >= 'a' && url[i] <= 'z') url[i] = (char)(url[i] - 32);
-        }
-
-        int urlLen = 0;
-        while (url[urlLen]) urlLen++;
-
-        int urlPixSz = 3;
-        int urlCharW = 5 * urlPixSz + urlPixSz;
-        if (urlLen * urlCharW > 600) {
-            urlPixSz = 2;
-            urlCharW = 5 * urlPixSz + urlPixSz;
-        }
-        int urlX = (640 - urlLen * urlCharW) / 2;
-        int urlY = 75;
-
-        for (int k = 0; k < urlLen; k++) {
-            char c = url[k];
-            int idx;
-            if (c >= 'A' && c <= 'Z') idx = c - 'A';
-            else if (c >= '0' && c <= '9') idx = 26 + (c - '0');
-            else if (c == '.') idx = 36;
-            else if (c == '/') idx = 37;
-            else { urlX += urlCharW; continue; }
-            const uint8_t *glyph = s_pixFont[idx];
-            for (int row = 0; row < 7; row++) {
-                uint8_t bits = glyph[row];
-                for (int col = 0; col < 5; col++) {
-                    if (bits & (0x10 >> col)) {
-                        R_DrawQuad2DSolid(
-                            urlX + col * urlPixSz,
-                            urlY + row * urlPixSz,
-                            urlX + (col + 1) * urlPixSz,
-                            urlY + (row + 1) * urlPixSz,
-                            z, 0xFFFFFFFF);
-                    }
-                }
-            }
-            urlX += urlCharW;
-        }
-
-        /* "SIGN IN AT" header above the URL. */
-        const char *hdr = "SIGN IN AT";
-        int hdrPixSz = 2;
-        int hdrCharW = 5 * hdrPixSz + hdrPixSz;
-        int hdrLen = 0;
-        while (hdr[hdrLen]) hdrLen++;
-        int hdrX = (640 - hdrLen * hdrCharW) / 2;
-        int hdrY = 35;
-        for (int k = 0; k < hdrLen; k++) {
-            char c = hdr[k];
-            int idx;
-            if (c >= 'A' && c <= 'Z') idx = c - 'A';
-            else { hdrX += hdrCharW; continue; }
-            const uint8_t *glyph = s_pixFont[idx];
-            for (int row = 0; row < 7; row++) {
-                uint8_t bits = glyph[row];
-                for (int col = 0; col < 5; col++) {
-                    if (bits & (0x10 >> col)) {
-                        R_DrawQuad2DSolid(
-                            hdrX + col * hdrPixSz,
-                            hdrY + row * hdrPixSz,
-                            hdrX + (col + 1) * hdrPixSz,
-                            hdrY + (row + 1) * hdrPixSz,
-                            z, 0xC0C0C0C0);
-                    }
-                }
-            }
-            hdrX += hdrCharW;
-        }
-    }
-
-    {
-        const char *prompt = "PRESS F3 FOR LAN PLAY";
-        int pixSz = 3;
-        int charW = 5 * pixSz + pixSz;
-        int pLen = 0;
-        while (prompt[pLen]) pLen++;
-        int px = (640 - pLen * charW) / 2;
-        int py = 480 - 50;
-        for (int k = 0; k < pLen; k++) {
-            char c = prompt[k];
-            int idx;
-            if (c >= 'A' && c <= 'Z') idx = c - 'A';
-            else if (c >= '0' && c <= '9') idx = 26 + (c - '0');
-            else if (c == '.') idx = 36;
-            else if (c == '/') idx = 37;
-            else { px += charW; continue; }
-            const uint8_t *glyph = s_pixFont[idx];
-            for (int row = 0; row < 7; row++) {
-                uint8_t bits = glyph[row];
-                for (int col = 0; col < 5; col++) {
-                    if (bits & (0x10 >> col)) {
-                        R_DrawQuad2DSolid(
-                            px + col * pixSz, py + row * pixSz,
-                            px + (col + 1) * pixSz, py + (row + 1) * pixSz,
-                            z, 0xC0C0C0C0);
-                    }
-                }
-            }
-            px += charW;
-        }
-    }
-
-    (void)authState;
-}
-
 /**
  * NetworkScreen — 0x0048A8AC — 4564 bytes
  * Network lobby screen: provider selection, session create/join,
@@ -4836,7 +4606,7 @@ static void RenderSignInScreen(const uint8_t *qrBuf, int qrSize,
  * stubs. Modem states (0xA–0xC) stripped — not relevant for LAN/UDP.
  */
 #ifdef SONICR_DC
-/* The network lobby was keyboard-only — F1 Host/Start, F2 Join, F3 LAN-only,
+/* The network lobby was keyboard-only — F1 Host/Start, F2 Join,
  * F6 character, F8 track, F7 mode. A stock DC has no keyboard, so map raw
  * controller buttons onto those F-key slots each frame, right after ReadInput
  * refreshes g_diKeyboardState and before the F-key state machine reads it.
@@ -4846,7 +4616,7 @@ static void RenderSignInScreen(const uint8_t *qrBuf, int qrSize,
  *
  *   A / Start -> F1 (Host / Start race)      L trigger -> F7 (toggle mode)
  *   R trigger -> F2 (Join)                   D-pad L/R -> F6 (cycle character)
- *   Y         -> F3 (LAN-only fallback)      D-pad U/D -> F8 (cycle track)
+ *                                            D-pad U/D -> F8 (cycle track)
  *
  * Rising-edge only: you enter this screen with the confirm button still held,
  * and state 0 (host/join) has no press latch of its own, so a level check would
@@ -4867,7 +4637,6 @@ static void NetSynthPadKeys(void)
     s_netPadPrev = mb;
     if (edge & (MENUBTN_A | MENUBTN_START))    g_diKeyboardState[0x3B] = 1; /* F1 */
     if (edge & MENUBTN_R)                       g_diKeyboardState[0x3C] = 1; /* F2 */
-    if (edge & MENUBTN_Y)                       g_diKeyboardState[0x3D] = 1; /* F3 */
     if (edge & (MENUBTN_LEFT | MENUBTN_RIGHT))  g_diKeyboardState[0x40] = 1; /* F6 */
     if (edge & (MENUBTN_UP | MENUBTN_DOWN))     g_diKeyboardState[0x42] = 1; /* F8 */
     if (edge & MENUBTN_L)                        g_diKeyboardState[0x41] = 1; /* F7 */
@@ -4890,137 +4659,6 @@ int NetworkScreen(void)
     R_FreezeTexture(TPAGE_PLATFORM_ICONS);
 
     NetSynthPadReset();   /* ignore pad buttons held on entry (see NetSynthPadKeys) */
-
-    /*  Sign-in pre-phase 
-     * If we don't have a valid auth token, run a sign-in loop first.
-     * Once authenticated (or if already authenticated), fall through
-     * to the existing lobby state machine. */
-    {
-        /* If MatchmakerInit() fails (e.g. compiled-out stub or curl init
-         * error), needSignIn starts at 0 so we skip the QR loop and fall
-         * straight through to LAN-only lobby flow. */
-        int mmInitOk = MatchmakerInit();
-        int needSignIn = (mmInitOk == 1);
-        NetDbgClear();
-        NetDbgPush("MM INIT %s", mmInitOk ? "OK" : "FAIL");
-        if (needSignIn && MatchmakerLoadToken()) {
-            NetDbgPush("TOKEN LOADED");
-            if (MatchmakerRefreshToken()) {
-                needSignIn = 0;
-                NetDbgPush("TOKEN OK %.20s...", MatchmakerGetToken());
-            }
-            else {
-                NetDbgPush("TOKEN REFRESH FAIL");
-            }
-        }
-
-        if (needSignIn) {
-            /* Load background + glyph textures for sign-in screen */
-#ifdef SONICR_DC
-            if (RunningFromSlowMedia()) PauseCD();   /* slow media: hold music so the load can't starve the stream */
-#endif
-            LoadTPageRGB(g_uiTexPage, PATH_GENERAL_RAW);
-            TintBackgroundTPage(0x20, 0x48, 0xB0);
-            LoadTPageRGB(g_uiTexPage + 1, "BIN/OPTION/NET00.RAW");
-            ProcessTpageStates();
-#ifdef SONICR_DC
-            ResumeCD();
-#endif
-
-            /* Request sign-in code — if it fails, skip to LAN-only */
-            if (!MatchmakerRequestCode()) {
-                needSignIn = 0;
-            }
-
-            if (needSignIn) {
-                /* Generate QR code */
-                uint8_t qrBuf[qrcodegen_BUFFER_LEN_MAX];
-                int qrSize = 0;
-                MatchmakerGenerateQR(qrBuf, &qrSize);
-
-                /* Sign-in render loop */
-                g_fadeState = FADE_IN;
-                g_screenResult = 0;
-                int pollCounter = 0;
-                int signInDone = 0;
-
-                UpdateCDPlayback(5);
-
-                while (!signInDone) {
-                    platform_pump_events();
-                    g_currentTime = timeGetTime();
-
-                    if (g_fadeState != 0) {
-                        UpdateFade();
-                    }
-                    if (g_fadeLevel == (int)0xFFFFFF00) {
-                        return g_screenResult;
-                    }
-
-                    ReadInput();
-                    NetSynthPadKeys();
-
-                    if (g_fadeState == 0) {
-                        /* Back button */
-                        if (g_inputBits & 1) {
-                            PlaySoundEffect(0, 0, 0);
-                            g_screenResult = 0;
-                            g_fadeState = FADE_OUT;
-                            continue;
-                        }
-
-                        /* F3 = skip sign-in, LAN only */
-                        if (g_diKeyboardState[0x3D]) {
-                            PlaySoundEffect(2, 0, 0);
-                            signInDone = 1;
-                            continue;
-                        }
-
-                        /* Poll for token every ~300 frames (~10 sec at 30fps) */
-                        pollCounter++;
-                        if (pollCounter >= 300) {
-                            pollCounter = 0;
-                            int result = MatchmakerPollToken();
-                            if (result == 1) {
-                                PlaySoundEffect(2, 0, 0);
-                                signInDone = 1;
-                            }
-                            else if (result == -1) {
-                                /* Code expired — request a new one */
-                                if (MatchmakerRequestCode()) {
-                                    MatchmakerGenerateQR(qrBuf, &qrSize);
-                                }
-                            }
-                        }
-                    }
-
-
-                    /* Render */
-                    ProcessTpageStates();
-                    BeginFrame();
-                    RenderBackground();
-                    EndFrame();
-
-                    if (g_fadeLevel < 0) {
-                        RenderFadeOverlay();
-                    }
-
-                    BeginFrame();
-                    if (qrSize > 0) {
-                        RenderSignInScreen(qrBuf, qrSize,
-                                           MatchmakerGetCode(), 0);
-                    }
-                    NetDbgDraw();
-                    RenderWavingMenuBackground();
-                    EndFrame();
-                    FlipD3D();
-
-                    g_totalFrames++;
-                    WaitForFrameCap();
-                }
-            }
-        }
-    }
 
     /* ROM table: per-character Y offset for nameplate rendering.
      * 10 entries indexed by charId. DGROUP at 0x501898. */
@@ -5046,8 +4684,6 @@ int NetworkScreen(void)
     int inputLock;                                           /* [ebp-0x20] */
     int localModeIdx;                                       /* [ebp-0x1C] */
     DWORD lastTickSec;                                       /* [ebp-0x18] */
-    MatchmakerSessionList g_mmSessionList;
-    memset(&g_mmSessionList, 0, sizeof(g_mmSessionList));
 
     /* Copy ROM mode model pair to local */
     modeModelLocal[0] = s_modeModelPair[0];                  /* 0x48A8C4-C5: movsd x2 */
@@ -5248,8 +4884,6 @@ int NetworkScreen(void)
                     dst[i] = g_portraitTextBuffer[i];
             }
 
-            UpnpClosePort(NET_PORT_DEFAULT);
-            MatchmakerClearSession();
             return g_screenResult;                            /* 0x48AC1F: eax = [0x925418] */
         }
 
@@ -5322,42 +4956,17 @@ int NetworkScreen(void)
             ns_connectionMode = (g_netProviderChoice != -1) ? 1 : 0; /* 0x48ADB1 */
 
             if (g_netProviderChoice == 0) {                    /* Host selected */
-                /* Single F1 press: create the session, register with the
-                 * matchmaker, and skip straight to state 2 (the lobby).
-                 * Original DirectPlay flow needed F1 again in state 1 to
-                 * advance — that was a fossil of the protocol-picker UI. */
+                /* Single F1 press: create the session and enter the lobby. */
                 if (CreateNetworkSession(NS_STR_SESSION_PW, NS_STR_SESSION_NAME)) {
-                    ns_setupMode = 1;                          /* [0x68AFD0] = 1 */
-                    ns_lobbyState = 2;                         /* skip state 1 */
-                    if (MatchmakerHasToken()) {
-                        UpnpOpenPort(NET_PORT_DEFAULT);
-                        int csOk = MatchmakerCreateSession(MatchmakerGetUsername(), NET_PORT_DEFAULT);
-                        NetDbgPush("CREATE %s ID %lld USER %s",
-                                   csOk ? "OK" : "FAIL",
-                                   (long long)MatchmakerGetSessionId(),
-                                   MatchmakerGetUsername());
-                    }
-                    else {
-                        NetDbgPush("NO TOKEN - LAN ONLY HOST");
-                    }
+                    ns_setupMode = 1;
+                    ns_lobbyState = 2;
                     EnumNetworkSessions(1);                    /* 0x487180 */
                     g_netEnumActive = 1;                       /* [0x689B54] */
                 }
             }
-            if (g_netProviderChoice == 1) {                    /* Join selected */
-                ns_setupMode = 2;                              /* [0x68AFD0] = 2 — join mode */
-                if (MatchmakerHasToken()) {
-                    int lsOk = MatchmakerListSessions(&g_mmSessionList);
-                    DebugLog("Matchmaker: hasToken=1 sessions=%d\n", g_mmSessionList.count);
-                    NetDbgPush("LIST %s SESSIONS %d",
-                               lsOk ? "OK" : "FAIL", g_mmSessionList.count);
-                    ns_lobbyState = 3;                         /* picker */
-                }
-                else {
-                    DebugLog("Matchmaker: hasToken=0, falling back to LAN\n");
-                    NetDbgPush("NO TOKEN - LAN DISCOVERY");
-                    ns_lobbyState = 1;
-                }
+            if (g_netProviderChoice == 1) {
+                ns_setupMode = 2;
+                ns_lobbyState = 1;
             }
             /* Provider choices 2,3 (modem/serial) stripped */
         }
@@ -5375,113 +4984,15 @@ int NetworkScreen(void)
                 }
             }
 
-            /* Join path: try matchmaker sessions first, then LAN. */
-            if (ns_setupMode == 2 && g_resultsUnlockFlag != 0) {
-                int joined = 0;
-                if (MatchmakerHasToken() && g_mmSessionList.count > 0) {
-                    extern const char *g_cmdHostIP;
-                    g_cmdHostIP = g_mmSessionList.sessions[0].ip_address;
-                    joined = JoinNetworkSession(NS_STR_JOIN_SESSION, 0);
-                    if (!joined) {
-                        g_cmdHostIP = NULL;
-                    }
-                }
-                if (!joined) {
-                    joined = JoinNetworkSession(NS_STR_JOIN_SESSION, 0);
-                }
-                if (joined) {
-                    ns_lobbyState = 2;
-                }
+            if (ns_setupMode == 2 && g_resultsUnlockFlag != 0 &&
+                JoinNetworkSession(NS_STR_JOIN_SESSION, 0)) {
+                ns_lobbyState = 2;
             }
 
             /* If we reached state 2, start enumerating */
             if (ns_lobbyState == 2) {                          /* 0x48B029 */
                 EnumNetworkSessions(1);                        /* 0x487180 */
                 g_netEnumActive = 1;                           /* [0x689B54] = edx(1) */
-            }
-        }
-
-        /* STATE 3: Matchmaker session picker-
-         * Reached when F2 is pressed in state 0 and a matchmaker token is
-         * present.  Shows the live session list, lets the user navigate
-         * with Up/Down and join with Enter.  F3 falls back to LAN search.
-         * ESC is handled by the back-key check at the top of the loop. */
-        {
-            if (ns_lobbyState != s_pickerPrevState) {
-                if (ns_lobbyState == 3) {
-                    s_pickerCursor = 0;
-                    s_pickerRefreshFrame = 0;
-                    s_pickerLastInput = 0xFF;  /* mask input on entry */
-                }
-                s_pickerPrevState = ns_lobbyState;
-            }
-
-            if (ns_lobbyState == 3) {
-                /* Periodic refresh — every ~10 seconds at 30fps.  We
-                 * keep a temp buffer so that a failed/empty response
-                 * doesn't wipe the previously-known session list (the
-                 * server has been observed returning empty arrays under
-                 * load — see issue #16).  Only commit on a successful
-                 * non-empty parse. */
-                s_pickerRefreshFrame++;
-                if (s_pickerRefreshFrame >= 300) {
-                    MatchmakerSessionList tmp;
-                    s_pickerRefreshFrame = 0;
-                    int rfOk = MatchmakerListSessions(&tmp);
-                    NetDbgPush("REFRESH %s SESSIONS %d",
-                               rfOk ? "OK" : "FAIL", tmp.count);
-                    if (rfOk && tmp.count > 0) {
-                        g_mmSessionList = tmp;
-                        if (s_pickerCursor >= g_mmSessionList.count) {
-                            s_pickerCursor = g_mmSessionList.count - 1;
-                        }
-                    }
-                }
-
-                /* Edge-detect: react only to newly-pressed bits. */
-                unsigned char newPress = (unsigned char)(g_inputBits & ~s_pickerLastInput);
-                s_pickerLastInput = g_inputBits;
-
-                if (g_mmSessionList.count > 0) {
-                    if (newPress & 0x10) {                     /* Up */
-                        if (s_pickerCursor > 0) {
-                            s_pickerCursor--;
-                            PlaySoundEffect(1, 0, 0);
-                        }
-                    }
-                    if (newPress & 0x20) {                     /* Down */
-                        if (s_pickerCursor < g_mmSessionList.count - 1) {
-                            s_pickerCursor++;
-                            PlaySoundEffect(1, 0, 0);
-                        }
-                    }
-                    if (newPress & 0x08) {                     /* Start = Enter */
-                        extern const char *g_cmdHostIP;
-                        MatchmakerSession *ms = &g_mmSessionList.sessions[s_pickerCursor];
-                        g_cmdHostIP = ms->ip_address;
-                        NetDbgPush("JOIN %s:%d", ms->ip_address, ms->port);
-                        DebugLog("Picker: joining session[%d] ip=%s port=%d\n",
-                                 s_pickerCursor, ms->ip_address, ms->port);
-                        if (JoinNetworkSession(NS_STR_JOIN_SESSION, 0)) {
-                            PlaySoundEffect(2, 0, 0);
-                            NetDbgPush("CONNECTED TO %s:%d", ms->ip_address, NET_PORT_DEFAULT);
-                            ns_lobbyState = 2;
-                            EnumNetworkSessions(1);
-                            g_netEnumActive = 1;
-                        }
-                        else {
-                            g_cmdHostIP = NULL;
-                            NetDbgPush("JOIN FAILED");
-                            DebugLog("Picker: join failed, staying in picker\n");
-                        }
-                    }
-                }
-
-                /* F3: fall back to LAN-only discovery. */
-                if (g_diKeyboardState[0x3D]) {
-                    PlaySoundEffect(2, 0, 0);
-                    ns_lobbyState = 1;
-                }
             }
         }
 
@@ -5731,11 +5242,6 @@ skip_text_entry:
             if ((g_totalFrames & 0x3F) == 0x20) {              /* 0x48B670: every 32 frames */
                 UpdateNetworkSync(g_netGameInfoDest, 0x30);   /* 0x48B687 */
             }
-            if ((g_totalFrames % 900) == 0 && MatchmakerGetSessionId() >= 0) {
-                int kaStatus = MatchmakerKeepAlive(g_netPlayerCount, "LOBBY");
-                NetDbgPush("KEEPALIVE HTTP %d SID %lld",
-                           kaStatus, (long long)MatchmakerGetSessionId());
-            }
         }
 
         /* Process received lobby data */
@@ -5888,235 +5394,19 @@ render_frame:
                 }
             }
 
-            /*  Mode-select prompt (state 0), join-search (state 1),
-             * matchmaker session picker (state 3), and in-lobby username
-             * (state 2) overlays.
-             *
-             * Replaces the original protocol-picker UI (F1=IPX, F2=TCP,
-             * ...) which was a fossil after the matchmaker refactor. */
             if (ns_lobbyState == 0 || ns_lobbyState == 1) {
-                /* Identity line: "LOGGED IN AS <username>" with the
-                 * prefix in pixel font and the username in the original
-                 * game font.  Measured then placed for a centered combo. */
-                if (MatchmakerHasToken() && MatchmakerGetUsername()[0]) {
-                    const char *prefix = "LOGGED IN AS ";
-                    int prefixW = PixTextWidth(prefix, 2);
-                    int glyphs[MM_MAX_USERNAME];
-                    StringToGlyphIds(MatchmakerGetUsername(), glyphs, MM_MAX_USERNAME);
-                    int glyphW = MeasureGlyphString(glyphs, MM_MAX_USERNAME);
-                    int totalW = prefixW + glyphW;
-                    int x = (640 - totalW) / 2;
-                    DrawPixText(prefix, x, 30 + 4, 2, 0xC0C0C0C0);
-                    int endX = DrawGlyphString(x + prefixW, 30 + 2, glyphs, MM_MAX_USERNAME);
-                    {
-                        int textH = 0x14;
-                        int iconH = 24;
-                        int iconYOff = (textH - iconH) / 2;
-                        int iconIdx = net_platform_icon(MM_PLATFORM,
-                                                        (uint8_t)platform_get_region());
-                        int icoUvX, icoUvY;
-                        net_platform_icon_uv(iconIdx, &icoUvX, &icoUvY);
-                        DrawTexturedQuad(
-                            endX + 4, 30 + 2 + iconYOff,
-                            0x40000000,
-                            iconH, iconH,
-                            TPAGE_PLATFORM_ICONS,
-                            icoUvX, icoUvY, PLATFORM_ICON_SIZE, PLATFORM_ICON_SIZE,
-                            0xFFFFFFFFu);
-                    }
-                }
-                else {
-                    const char *idLine = "LAN MODE";
-                    int idW = PixTextWidth(idLine, 2);
-                    DrawPixText(idLine, (640 - idW) / 2, 30, 2, 0xC0C0C0C0);
-                }
-
+                const char *idLine = "LAN MODE";
+                DrawPixText(idLine, (640 - PixTextWidth(idLine, 2)) / 2, 30, 2, 0xC0C0C0C0);
                 if (ns_lobbyState == 0) {
-                    const char *l1 = "PRESS F1 TO HOST";
-                    const char *l2 = "PRESS F2 TO JOIN";
-                    int w1 = PixTextWidth(l1, 4);
-                    int w2 = PixTextWidth(l2, 4);
-                    DrawPixText(l1, (640 - w1) / 2, 200, 4, 0xFFFFFFFF);
-                    DrawPixText(l2, (640 - w2) / 2, 250, 4, 0xFFFFFFFF);
-                }
-                else /* ns_lobbyState == 1 */ {
-                    const char *msg = "SEARCHING FOR SESSIONS...";
-                    int w = PixTextWidth(msg, 3);
-                    DrawPixText(msg, (640 - w) / 2, 220, 3, 0xFFFFFFFF);
+                    const char *host = "PRESS F1 TO HOST";
+                    const char *join = "PRESS F2 TO JOIN";
+                    DrawPixText(host, (640 - PixTextWidth(host, 4)) / 2, 200, 4, 0xFFFFFFFF);
+                    DrawPixText(join, (640 - PixTextWidth(join, 4)) / 2, 250, 4, 0xFFFFFFFF);
+                } else {
+                    const char *search = "SEARCHING FOR SESSIONS...";
+                    DrawPixText(search, (640 - PixTextWidth(search, 3)) / 2, 220, 3, 0xFFFFFFFF);
                 }
             }
-            else if (ns_lobbyState == 3) {
-                /*  Matchmaker session picker ─
-                 * Header in pixel font; host names in the original game
-                 * font (DrawGlyphString) for visual consistency with the
-                 * lobby; player counts in pixel font next to each name. */
-                if (MatchmakerGetUsername()[0]) {
-                    const char *prefix = "LOGGED IN AS ";
-                    int prefixW = PixTextWidth(prefix, 2);
-                    int glyphs[MM_MAX_USERNAME];
-                    StringToGlyphIds(MatchmakerGetUsername(), glyphs, MM_MAX_USERNAME);
-                    int glyphW = MeasureGlyphString(glyphs, MM_MAX_USERNAME);
-                    int x = (640 - (prefixW + glyphW)) / 2;
-                    DrawPixText(prefix, x, 30 + 4, 2, 0xC0C0C0C0);
-                    int endX = DrawGlyphString(x + prefixW, 30 + 2, glyphs, MM_MAX_USERNAME);
-                    {
-                        int textH = 0x14;
-                        int iconH = 24;
-                        int iconYOff = (textH - iconH) / 2;
-                        int iconIdx = net_platform_icon(MM_PLATFORM,
-                                                        (uint8_t)platform_get_region());
-                        int icoUvX, icoUvY;
-                        net_platform_icon_uv(iconIdx, &icoUvX, &icoUvY);
-                        DrawTexturedQuad(
-                            endX + 4, 30 + 2 + iconYOff,
-                            0x40000000,
-                            iconH, iconH,
-                            TPAGE_PLATFORM_ICONS,
-                            icoUvX, icoUvY, PLATFORM_ICON_SIZE, PLATFORM_ICON_SIZE,
-                            0xFFFFFFFFu);
-                    }
-                }
-                else {
-                    const char *idLine = "MATCHMAKER";
-                    int idW = PixTextWidth(idLine, 2);
-                    DrawPixText(idLine, (640 - idW) / 2, 30, 2, 0xC0C0C0C0);
-                }
-
-                const char *hdr = "SELECT A SESSION";
-                int hdrW = PixTextWidth(hdr, 4);
-                DrawPixText(hdr, (640 - hdrW) / 2, 60, 4, 0xFFFFFFFF);
-
-                int picker_count = g_mmSessionList.count;
-                int rowY = 130;
-                int rowH = 28;
-                int rowX = 80;
-                int countryX = 420;
-                int pingX = 470;
-                int countX = 580;
-
-                int cursor = s_pickerCursor;
-
-                if (picker_count == 0) {
-                    const char *waitMsg = "NO SESSIONS YET - SEARCHING";
-                    int w = PixTextWidth(waitMsg, 3);
-                    DrawPixText(waitMsg, (640 - w) / 2, 240, 3, 0xC0C0C0C0);
-                }
-                else {
-                    int maxRows = picker_count;
-                    if (maxRows > 9) {
-                        maxRows = 9;
-                    }
-                    for (int i = 0; i < maxRows; i++) {
-                        int y = rowY + i * rowH;
-                        if (i == cursor) {
-                            /* z=3.0 puts the highlight bar behind the
-                             * glyph text (DrawGlyphString uses z=2.0)
-                             * so the username renders on top of it. */
-                            R_DrawQuad2DSolid(rowX - 10, y - 4,
-                                              countX + 60, y + 24,
-                                              3.0f, 0x80FFFFFF);
-                        }
-                        int glyphs[MM_MAX_USERNAME];
-                        StringToGlyphIds(g_mmSessionList.sessions[i].host_name,
-                                         glyphs, MM_MAX_USERNAME);
-                        int nameEndX = DrawGlyphString(rowX, y, glyphs, MM_MAX_USERNAME);
-                        {
-                            int textH = 0x14;
-                            int iconH = 24;
-                            int iconYOff = (textH - iconH) / 2;
-                            uint8_t sessionRegion = 0;
-                            const char *cc = g_mmSessionList.sessions[i].country_code;
-                            if (cc[0] == 'J' && cc[1] == 'P') {
-                                sessionRegion = NET_REGION_JAPAN;
-                            }
-                            else if ((cc[0] == 'G' && cc[1] == 'B') ||
-                                     (cc[0] == 'D' && cc[1] == 'E') ||
-                                     (cc[0] == 'F' && cc[1] == 'R') ||
-                                     (cc[0] == 'E' && cc[1] == 'S') ||
-                                     (cc[0] == 'I' && cc[1] == 'T') ||
-                                     (cc[0] == 'N' && cc[1] == 'L') ||
-                                     (cc[0] == 'S' && cc[1] == 'E') ||
-                                     (cc[0] == 'P' && cc[1] == 'T') ||
-                                     (cc[0] == 'A' && cc[1] == 'T') ||
-                                     (cc[0] == 'B' && cc[1] == 'E') ||
-                                     (cc[0] == 'C' && cc[1] == 'H') ||
-                                     (cc[0] == 'N' && cc[1] == 'O') ||
-                                     (cc[0] == 'D' && cc[1] == 'K') ||
-                                     (cc[0] == 'F' && cc[1] == 'I') ||
-                                     (cc[0] == 'I' && cc[1] == 'E') ||
-                                     (cc[0] == 'P' && cc[1] == 'L'))
-                            {
-                                sessionRegion = NET_REGION_EUROPE;
-                            }
-                            else {
-                                sessionRegion = NET_REGION_US;
-                            }
-                            int iconIdx = net_platform_icon(
-                                g_mmSessionList.sessions[i].platform, sessionRegion);
-                            int icoUvX, icoUvY;
-                            net_platform_icon_uv(iconIdx, &icoUvX, &icoUvY);
-                            DrawTexturedQuad(
-                                nameEndX + 4, y + iconYOff,
-                                0x40000000,
-                                iconH, iconH,
-                                TPAGE_PLATFORM_ICONS,
-                                icoUvX, icoUvY, PLATFORM_ICON_SIZE, PLATFORM_ICON_SIZE,
-                                0xFFFFFFFFu);
-                        }
-
-                        const char *cc = g_mmSessionList.sessions[i].country_code;
-                        if (cc[0]) {
-                            DrawPixText(cc, countryX, y + 1, 3, 0xFFFFFFFF);
-                        }
-
-                        char pingStr[8];
-                        int pms = g_mmSessionList.sessions[i].ping_ms;
-                        if (pms < 0) {
-                            snprintf(pingStr, sizeof(pingStr), "?");
-                        }
-                        else if (pms > 999) {
-                            snprintf(pingStr, sizeof(pingStr), "999MS");
-                        }
-                        else {
-                            snprintf(pingStr, sizeof(pingStr), "%dMS", pms);
-                        }
-                        DrawPixText(pingStr, pingX, y + 1, 3, 0xFFFFFFFF);
-
-                        char countStr[8];
-                        snprintf(countStr, sizeof(countStr), "%d/4",
-                                 g_mmSessionList.sessions[i].player_count);
-                        DrawPixText(countStr, countX, y + 1, 3, 0xFFFFFFFF);
-                    }
-                }
-
-                const char *hint = "UP/DOWN SELECT - ENTER JOIN - F3 LAN - ESC BACK";
-                int hintW = PixTextWidth(hint, 2);
-                DrawPixText(hint, (640 - hintW) / 2, 440, 2, 0xC0C0C0C0);
-            }
-            else if (MatchmakerHasToken() && MatchmakerGetUsername()[0]) {
-                /* In-lobby (state 2) username with platform icon. */
-                {
-                    int textH = 0x14;
-                    int iconH = 24;
-                    int iconYOff = (textH - iconH) / 2;
-                    int iconIdx = net_platform_icon(MM_PLATFORM,
-                                                    (uint8_t)platform_get_region());
-                    int icoUvX, icoUvY;
-                    net_platform_icon_uv(iconIdx, &icoUvX, &icoUvY);
-                    DrawTexturedQuad(
-                        20, 60 + iconYOff,
-                        0x40000000,
-                        iconH, iconH,
-                        TPAGE_PLATFORM_ICONS,
-                        icoUvX, icoUvY, PLATFORM_ICON_SIZE, PLATFORM_ICON_SIZE,
-                        0xFFFFFFFFu);
-                }
-                int glyphs[MM_MAX_USERNAME];
-                StringToGlyphIds(MatchmakerGetUsername(), glyphs, MM_MAX_USERNAME);
-                DrawGlyphString(20 + 26, 60, glyphs, MM_MAX_USERNAME);
-            }
-
-            NetDbgDraw();
 
             if (g_fadeLevel < 0) {
                 RenderFadeOverlay();
@@ -6403,9 +5693,7 @@ int NetworkScreenReentry(void)
             ns_connectionMode = (g_netProviderChoice != -1) ? 1 : 0;
 
             if (g_netProviderChoice == 0) {
-                /* Single F1 press: create session and skip straight to
-                 * state 2.  Re-entry path doesn't re-register with the
-                 * matchmaker (the session was created before the race). */
+                /* Single F1 press: create session and enter the lobby. */
                 if (CreateNetworkSession(NS_STR_SESSION_PW, NS_STR_SESSION_NAME)) {
                     ns_setupMode = 1;
                     ns_lobbyState = 2;
@@ -6746,76 +6034,18 @@ render_frame_re:
                 }
             }
 
-            /* Mode-select / search prompt for states 0 and 1; in-lobby
-             * username via the original game font for state 2+. Mirrors
-             * the corresponding block in NetworkScreen. */
             if (ns_lobbyState < 2) {
-                if (MatchmakerHasToken() && MatchmakerGetUsername()[0]) {
-                    const char *prefix = "LOGGED IN AS ";
-                    int prefixW = PixTextWidth(prefix, 2);
-                    int glyphs[MM_MAX_USERNAME];
-                    StringToGlyphIds(MatchmakerGetUsername(), glyphs, MM_MAX_USERNAME);
-                    int glyphW = MeasureGlyphString(glyphs, MM_MAX_USERNAME);
-                    int x = (640 - (prefixW + glyphW)) / 2;
-                    DrawPixText(prefix, x, 30 + 4, 2, 0xC0C0C0C0);
-                    int endX = DrawGlyphString(x + prefixW, 30 + 2, glyphs, MM_MAX_USERNAME);
-                    {
-                        int textH = 0x14;
-                        int iconH = 24;
-                        int iconYOff = (textH - iconH) / 2;
-                        int iconIdx = net_platform_icon(MM_PLATFORM,
-                                                        (uint8_t)platform_get_region());
-                        int icoUvX, icoUvY;
-                        net_platform_icon_uv(iconIdx, &icoUvX, &icoUvY);
-                        DrawTexturedQuad(
-                            endX + 4, 30 + 2 + iconYOff,
-                            0x40000000,
-                            iconH, iconH,
-                            TPAGE_PLATFORM_ICONS,
-                            icoUvX, icoUvY, PLATFORM_ICON_SIZE, PLATFORM_ICON_SIZE,
-                            0xFFFFFFFFu);
-                    }
-                }
-                else {
-                    const char *idLine = "LAN MODE";
-                    int idW = PixTextWidth(idLine, 2);
-                    DrawPixText(idLine, (640 - idW) / 2, 30, 2, 0xC0C0C0C0);
-                }
-
+                const char *idLine = "LAN MODE";
+                DrawPixText(idLine, (640 - PixTextWidth(idLine, 2)) / 2, 30, 2, 0xC0C0C0C0);
                 if (ns_lobbyState == 0) {
-                    const char *l1 = "PRESS F1 TO HOST";
-                    const char *l2 = "PRESS F2 TO JOIN";
-                    int w1 = PixTextWidth(l1, 4);
-                    int w2 = PixTextWidth(l2, 4);
-                    DrawPixText(l1, (640 - w1) / 2, 200, 4, 0xFFFFFFFF);
-                    DrawPixText(l2, (640 - w2) / 2, 250, 4, 0xFFFFFFFF);
+                    const char *host = "PRESS F1 TO HOST";
+                    const char *join = "PRESS F2 TO JOIN";
+                    DrawPixText(host, (640 - PixTextWidth(host, 4)) / 2, 200, 4, 0xFFFFFFFF);
+                    DrawPixText(join, (640 - PixTextWidth(join, 4)) / 2, 250, 4, 0xFFFFFFFF);
+                } else {
+                    const char *search = "SEARCHING FOR SESSIONS...";
+                    DrawPixText(search, (640 - PixTextWidth(search, 3)) / 2, 220, 3, 0xFFFFFFFF);
                 }
-                else /* ns_lobbyState == 1 */ {
-                    const char *msg = "SEARCHING FOR SESSIONS...";
-                    int w = PixTextWidth(msg, 3);
-                    DrawPixText(msg, (640 - w) / 2, 220, 3, 0xFFFFFFFF);
-                }
-            }
-            else if (MatchmakerHasToken() && MatchmakerGetUsername()[0]) {
-                {
-                    int textH = 0x14;
-                    int iconH = 24;
-                    int iconYOff = (textH - iconH) / 2;
-                    int iconIdx = net_platform_icon(MM_PLATFORM,
-                                                    (uint8_t)platform_get_region());
-                    int icoUvX, icoUvY;
-                    net_platform_icon_uv(iconIdx, &icoUvX, &icoUvY);
-                    DrawTexturedQuad(
-                        20, 60 + iconYOff,
-                        0x40000000,
-                        iconH, iconH,
-                        TPAGE_PLATFORM_ICONS,
-                        icoUvX, icoUvY, PLATFORM_ICON_SIZE, PLATFORM_ICON_SIZE,
-                        0xFFFFFFFFu);
-                }
-                int glyphs[MM_MAX_USERNAME];
-                StringToGlyphIds(MatchmakerGetUsername(), glyphs, MM_MAX_USERNAME);
-                DrawGlyphString(20 + 26, 60, glyphs, MM_MAX_USERNAME);
             }
 
             if (g_fadeLevel < 0) {

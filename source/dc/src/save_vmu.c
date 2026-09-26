@@ -54,7 +54,6 @@ extern void ResumeCD(void);
 #define VMU_BUNDLE_FN "SONICR_SAVE"
 #define VMU_OPT_FN    "SONICR_OPT"
 #define VMU_PAD_FN    "SONICR_PAD"
-#define VMU_NET_FN    "SONICR_NET"
 #define VMU_KEY_FN    "SONICR_KEY"
 #define VMU_GHO_FN    "SONICR_GHO"
 
@@ -91,7 +90,6 @@ enum {
     K_BUNDLE,
     K_OPT,
     K_PAD,
-    K_ONLINE,
     K_GHOST,
     K_KEYS
 };
@@ -104,8 +102,6 @@ static const char *kind_fn(int kind)
             return VMU_OPT_FN;
         case K_PAD:
             return VMU_PAD_FN;
-        case K_ONLINE:
-            return VMU_NET_FN;
         case K_KEYS:
             return VMU_KEY_FN;
         default:
@@ -119,8 +115,6 @@ static const char *kind_desc(int kind)
             return "Sonic R Options";
         case K_PAD:
             return "Sonic R Pad Config";
-        case K_ONLINE:
-            return "Sonic R Online";
         case K_KEYS:
             return "Sonic R Keys";
         default:
@@ -431,7 +425,7 @@ static void capacity_ensure(void)
 
     int freeb = vmu_free_blocks_now(d);
     int haveCore = vmu_file_exists(VMU_BUNDLE_FN) || vmu_file_exists(VMU_OPT_FN)
-                || vmu_file_exists(VMU_PAD_FN)   || vmu_file_exists(VMU_NET_FN)
+                || vmu_file_exists(VMU_PAD_FN)
                 || vmu_file_exists(VMU_KEY_FN);
 
     if (!haveCore) {                                /* fresh card */
@@ -607,7 +601,6 @@ static int classify(const char *path, int *slot)
 {
     if (strstr(path, "SONICR.INF")) return K_OPT;
     if (strstr(path, "JOYSTICK.INF")) return K_PAD;
-    if (strstr(path, "ONLINE.DAT")) return K_ONLINE;
     if (strstr(path, "KEYS.BIN")) return K_KEYS;
 
     /* GHOST/G<NN>.GHO — the DC-collapsed ghost slot (ghost.c BuildGhostPath).

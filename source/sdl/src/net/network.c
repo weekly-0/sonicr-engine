@@ -9,7 +9,6 @@
 #include "sonicr_globals.h"
 #include "sonicr_functions.h"
 #include "net_transport.h"
-#include "matchmaker.h"
 #include "net_interp.h"
 #include "net_delta.h"
 #ifdef SONICR_DC
@@ -264,11 +263,11 @@ static struct {
 #define NET_DECO_NAME    0x14   /* offset of name glyphs (int[], -1 terminated) */
 #define NET_DECO_NAME_MAX 16   /* max glyphs in name area */
 
-/* Raw matchmaker usernames keyed by slot.  Populated at the same time as
+/* Raw player names keyed by slot. Populated at the same time as
  * the decoration table's glyph encoding (which is lossy: glyphs can only
  * represent alphanumerics). Used when building the SLOT_ASSIGN name table
  * for late joiners. */
-static char s_netSlotNames[NET_MAX_PLAYERS][MM_MAX_USERNAME];
+static char s_netSlotNames[NET_MAX_PLAYERS][NET_NAME_MAX];
 
 #define NET_PLATFORM_LEN 16
 static char    s_netSlotPlatform[NET_MAX_PLAYERS][NET_PLATFORM_LEN];
@@ -654,8 +653,8 @@ void net_set_slot_name(int slot, const char *name)
 {
     if (slot < 0 || slot >= NET_MAX_PLAYERS) return;
     if (name == NULL) name = "";
-    strncpy(s_netSlotNames[slot], name, MM_MAX_USERNAME - 1);
-    s_netSlotNames[slot][MM_MAX_USERNAME - 1] = '\0';
+    strncpy(s_netSlotNames[slot], name, NET_NAME_MAX - 1);
+    s_netSlotNames[slot][NET_NAME_MAX - 1] = '\0';
 }
 
 const char *net_get_slot_name(int slot)
@@ -768,7 +767,7 @@ static void host_release_slot_identity(int slot)
 
     /* Push the empty name to the remaining clients — their PEER_NAME handler
      * already treats it as "this slot has no player". */
-    enum { PEER_SIZE = 8 + MM_MAX_USERNAME + NET_PLATFORM_LEN + 1 };
+    enum { PEER_SIZE = 8 + NET_NAME_MAX + NET_PLATFORM_LEN + 1 };
     char peerbuf[PEER_SIZE];
     memset(peerbuf, 0, sizeof(peerbuf));
     wl32(peerbuf + 0, (uint32_t)NET_MSG_PEER_NAME);
@@ -1535,24 +1534,24 @@ void ApplyNetworkPlayerState(void)
         /* ---- SDL session protocol: join request / slot assignment ---- */
         if (header == NET_MSG_JOIN_REQ && net_is_host()) {
             /* Host: client requested a slot. from_slot was auto-assigned
-             * by net_recv(). Payload carries the client's matchmaker
+             * by net_recv(). Payload carries the client's
              * username; we use it to populate the decoration table.
              * Reply with the full name table so the new client knows
              * everyone, then broadcast PEER_NAME so existing clients
              * learn the new joiner's name. */
-            if (from_slot >= 1 && from_slot < NET_MAX_PLAYERS && len >= 4 + MM_MAX_USERNAME) {
+            if (from_slot >= 1 && from_slot < NET_MAX_PLAYERS && len >= 4 + NET_NAME_MAX) {
                 /* Pull the client's username out of the request payload. */
-                char joinerName[MM_MAX_USERNAME];
-                memcpy(joinerName, buf + 4, MM_MAX_USERNAME);
-                joinerName[MM_MAX_USERNAME - 1] = '\0';
+                char joinerName[NET_NAME_MAX];
+                memcpy(joinerName, buf + 4, NET_NAME_MAX);
+                joinerName[NET_NAME_MAX - 1] = '\0';
 
                 char joinerPlatform[NET_PLATFORM_LEN];
                 uint8_t joinerRegion = 0;
                 memset(joinerPlatform, 0, sizeof(joinerPlatform));
-                if (len >= (int)(4 + MM_MAX_USERNAME + NET_PLATFORM_LEN + 1)) {
-                    memcpy(joinerPlatform, buf + 4 + MM_MAX_USERNAME, NET_PLATFORM_LEN);
+                if (len >= (int)(4 + NET_NAME_MAX + NET_PLATFORM_LEN + 1)) {
+                    memcpy(joinerPlatform, buf + 4 + NET_NAME_MAX, NET_PLATFORM_LEN);
                     joinerPlatform[NET_PLATFORM_LEN - 1] = '\0';
-                    joinerRegion = (uint8_t)buf[4 + MM_MAX_USERNAME + NET_PLATFORM_LEN];
+                    joinerRegion = (uint8_t)buf[4 + NET_NAME_MAX + NET_PLATFORM_LEN];
                 }
 
                 g_netPlayerCount = from_slot + 1;  /* grow as players join */
@@ -1573,12 +1572,12 @@ void ApplyNetworkPlayerState(void)
                  * Wire layout:
                  *   +0x00 int     hdr
                  *   +0x04 int     slot
-                 *   +0x08 char    names[NET_MAX_PLAYERS][MM_MAX_USERNAME]
+                 *   +0x08 char    names[NET_MAX_PLAYERS][NET_NAME_MAX]
                  *   +... char    platforms[NET_MAX_PLAYERS][NET_PLATFORM_LEN]
                  *   +... uint8_t regions[NET_MAX_PLAYERS] */
                 {
                     enum { REPLY_SIZE = 8
-                        + NET_MAX_PLAYERS * MM_MAX_USERNAME
+                        + NET_MAX_PLAYERS * NET_NAME_MAX
                         + NET_MAX_PLAYERS * NET_PLATFORM_LEN
                         + NET_MAX_PLAYERS };
                     char _replybuf[REPLY_SIZE];
@@ -1590,11 +1589,11 @@ void ApplyNetworkPlayerState(void)
                     {
                         int s;
                         for (s = 0; s < NET_MAX_PLAYERS; s++) {
-                            strncpy(_replybuf + _off + s * MM_MAX_USERNAME,
-                                    net_get_slot_name(s), MM_MAX_USERNAME - 1);
+                            strncpy(_replybuf + _off + s * NET_NAME_MAX,
+                                    net_get_slot_name(s), NET_NAME_MAX - 1);
                         }
                     }
-                    _off += NET_MAX_PLAYERS * MM_MAX_USERNAME;
+                    _off += NET_MAX_PLAYERS * NET_NAME_MAX;
                     {
                         int s;
                         for (s = 0; s < NET_MAX_PLAYERS; s++) {
@@ -1617,18 +1616,18 @@ void ApplyNetworkPlayerState(void)
                  * Wire layout:
                  *   +0x00 int     hdr      = NET_MSG_PEER_NAME
                  *   +0x04 int     slot
-                 *   +0x08 char    name[MM_MAX_USERNAME]
+                 *   +0x08 char    name[NET_NAME_MAX]
                  *   +... char    platform[NET_PLATFORM_LEN]
                  *   +... uint8_t region */
                 {
-                    enum { PEER_SIZE = 8 + MM_MAX_USERNAME + NET_PLATFORM_LEN + 1 };
+                    enum { PEER_SIZE = 8 + NET_NAME_MAX + NET_PLATFORM_LEN + 1 };
                     char _peerbuf[PEER_SIZE];
                     memset(_peerbuf, 0, sizeof(_peerbuf));
                     wl32(_peerbuf + 0, (uint32_t)NET_MSG_PEER_NAME);
                     wl32(_peerbuf + 4, (uint32_t)from_slot);
-                    strncpy(_peerbuf + 8, joinerName, MM_MAX_USERNAME - 1);
-                    strncpy(_peerbuf + 8 + MM_MAX_USERNAME, joinerPlatform, NET_PLATFORM_LEN - 1);
-                    _peerbuf[8 + MM_MAX_USERNAME + NET_PLATFORM_LEN] = (char)joinerRegion;
+                    strncpy(_peerbuf + 8, joinerName, NET_NAME_MAX - 1);
+                    strncpy(_peerbuf + 8 + NET_NAME_MAX, joinerPlatform, NET_PLATFORM_LEN - 1);
+                    _peerbuf[8 + NET_NAME_MAX + NET_PLATFORM_LEN] = (char)joinerRegion;
                     int s;
                     for (s = 1; s < g_netPlayerCount; s++) {
                         if (s == from_slot) continue;
@@ -1644,7 +1643,7 @@ void ApplyNetworkPlayerState(void)
         }
 
         if (header == NET_MSG_SLOT_ASSIGN && !net_is_host()
-            && len >= 8 + NET_MAX_PLAYERS * MM_MAX_USERNAME) {
+            && len >= 8 + NET_MAX_PLAYERS * NET_NAME_MAX) {
             /* Client: host told us our slot, plus the full name/platform table
              * for everyone currently in the session. */
             int slot = rl32s(buf + 4);
@@ -1655,7 +1654,7 @@ void ApplyNetworkPlayerState(void)
                 net_set_local_slot(slot);
 
                 const char *names = buf + 8;
-                int nameBlockSize = NET_MAX_PLAYERS * MM_MAX_USERNAME;
+                int nameBlockSize = NET_MAX_PLAYERS * NET_NAME_MAX;
                 int hasPlatforms = (len >= 8 + nameBlockSize
                                     + NET_MAX_PLAYERS * NET_PLATFORM_LEN
                                     + NET_MAX_PLAYERS);
@@ -1666,9 +1665,9 @@ void ApplyNetworkPlayerState(void)
 
                 int s;
                 for (s = 0; s < NET_MAX_PLAYERS; s++) {
-                    char nm[MM_MAX_USERNAME];
-                    memcpy(nm, names + s * MM_MAX_USERNAME, MM_MAX_USERNAME);
-                    nm[MM_MAX_USERNAME - 1] = '\0';
+                    char nm[NET_NAME_MAX];
+                    memcpy(nm, names + s * NET_NAME_MAX, NET_NAME_MAX);
+                    nm[NET_NAME_MAX - 1] = '\0';
                     if (nm[0] == '\0') continue;
                     char *entry = g_netPlayerDecorations + s * NET_DECO_STRIDE;
                     *(int *)(entry + NET_DECO_DPID) = s;
@@ -1690,25 +1689,25 @@ void ApplyNetworkPlayerState(void)
         }
 
         if (header == NET_MSG_PEER_NAME && !net_is_host()
-            && len >= 8 + MM_MAX_USERNAME) {
+            && len >= 8 + NET_NAME_MAX) {
             /* Host informed us a peer joined (or changed name). Update the
              * decoration entry + name cache for that slot so lobby/HUD show
              * the real name. */
             int slot = rl32s(buf + 4);
             if (slot >= 0 && slot < NET_MAX_PLAYERS) {
-                char nm[MM_MAX_USERNAME];
-                memcpy(nm, buf + 8, MM_MAX_USERNAME);
-                nm[MM_MAX_USERNAME - 1] = '\0';
+                char nm[NET_NAME_MAX];
+                memcpy(nm, buf + 8, NET_NAME_MAX);
+                nm[NET_NAME_MAX - 1] = '\0';
                 char *entry = g_netPlayerDecorations + slot * NET_DECO_STRIDE;
                 *(int *)(entry + NET_DECO_DPID) = slot;
                 *(unsigned short *)(entry + NET_DECO_SLOT) = (unsigned short)slot;
                 net_deco_set_name(entry, nm);
                 net_set_slot_name(slot, nm);
-                if (len >= (int)(8 + MM_MAX_USERNAME + NET_PLATFORM_LEN + 1)) {
+                if (len >= (int)(8 + NET_NAME_MAX + NET_PLATFORM_LEN + 1)) {
                     char plat[NET_PLATFORM_LEN];
-                    memcpy(plat, buf + 8 + MM_MAX_USERNAME, NET_PLATFORM_LEN);
+                    memcpy(plat, buf + 8 + NET_NAME_MAX, NET_PLATFORM_LEN);
                     plat[NET_PLATFORM_LEN - 1] = '\0';
-                    uint8_t reg = (uint8_t)buf[8 + MM_MAX_USERNAME + NET_PLATFORM_LEN];
+                    uint8_t reg = (uint8_t)buf[8 + NET_NAME_MAX + NET_PLATFORM_LEN];
                     net_set_slot_platform(slot, plat, reg);
                 }
                 DebugLog("Client: PEER_NAME slot=%d name='%s'\n", slot, nm);

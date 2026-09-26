@@ -18,7 +18,6 @@
 #include "vertex_struct.h"
 #include "platform.h"
 #include "net_transport.h"
-#include "net/matchmaker.h"
 #include "net/net_interp.h"
 
 /* Shared keystate from the platform layer */
@@ -173,7 +172,7 @@ const char *g_cmdHostIP = NULL;
 static int s_cmdUnlock = 0;
 static int s_cmdFullscreen = 0;
 static int s_cmdPort = -1;
-static char s_cmdUsername[MM_MAX_USERNAME];
+static char s_cmdUsername[NET_NAME_MAX];
 
 extern void UpdateFlyoverCamera(Player *player, CamStateEntry *cam, RenderCamera *outStruct,
                                  int *waypointTable, int param5, int vpIdx);
@@ -232,13 +231,10 @@ int CreateNetworkSession(const char *name, const char *password)
         char *entry = g_netPlayerDecorations + 0 * NET_DECO_STRIDE;
         *(int *)(entry + NET_DECO_DPID) = 0;
         *(unsigned short *)(entry + NET_DECO_SLOT) = 0;
-        const char *uname = MatchmakerGetUsername();
-        if (uname == NULL || uname[0] == '\0') {
-            uname = "host";
-        }
+        const char *uname = s_cmdUsername[0] ? s_cmdUsername : "host";
         net_deco_set_name(entry, uname);
         net_set_slot_name(0, uname);
-        net_set_slot_platform(0, MM_PLATFORM, (uint8_t)platform_get_region());
+        net_set_slot_platform(0, NET_PLATFORM_NAME, (uint8_t)platform_get_region());
 
         DebugLog("Network session created (host, port %d)\n", NET_PORT_DEFAULT);
         return 1;
@@ -267,23 +263,19 @@ int JoinNetworkSession(const char *name, int enumIdx)
     }
 
     if (net_client_connect(hostIp, NET_PORT_DEFAULT) == 0) {
-        /* Send join request so host assigns us a slot.  Payload carries our
-         * matchmaker username so the host (and via SLOT_ASSIGN/PEER_NAME, the
-         * other clients) can populate the decoration table with real names. */
+        /* Send join request so host assigns us a slot. Payload carries our
+         * display name for the other clients. */
         struct {
             int     hdr;
-            char    name[MM_MAX_USERNAME];
+            char    name[NET_NAME_MAX];
             char    platform[16];
             uint8_t region;
         } joinReq;
         memset(&joinReq, 0, sizeof(joinReq));
         joinReq.hdr = NET_MSG_JOIN_REQ;
-        const char *uname = MatchmakerGetUsername();
-        if (uname == NULL) {
-            uname = "";
-        }
-        strncpy(joinReq.name, uname, MM_MAX_USERNAME - 1);
-        strncpy(joinReq.platform, MM_PLATFORM, sizeof(joinReq.platform) - 1);
+        const char *uname = s_cmdUsername;
+        strncpy(joinReq.name, uname, NET_NAME_MAX - 1);
+        strncpy(joinReq.platform, NET_PLATFORM_NAME, sizeof(joinReq.platform) - 1);
         joinReq.region = (uint8_t)platform_get_region();
         net_send_to_host(&joinReq, sizeof(joinReq));
         DebugLog("Joined session at %s:%d as '%s'\n", hostIp, NET_PORT_DEFAULT, joinReq.name);
@@ -548,7 +540,6 @@ int main(int argc, char *argv[])
             case 'n':
                 strncpy(s_cmdUsername, optarg, sizeof(s_cmdUsername) - 1);
                 s_cmdUsername[sizeof(s_cmdUsername) - 1] = '\0';
-                MatchmakerSetFallbackUsername(s_cmdUsername);
                 break;
         }
     }
@@ -707,7 +698,7 @@ def SONICR_DC /* DC splash screen */
 #endif
     }
 #ifdef SONICR_DC
-    MatchmakerSetFallbackUsername("Dreamcast");
+    strncpy(s_cmdUsername, "Dreamcast", sizeof(s_cmdUsername) - 1);
 #endif
 
     g_diDeviceReady = 1;                                   /* enable keyboard polling */
